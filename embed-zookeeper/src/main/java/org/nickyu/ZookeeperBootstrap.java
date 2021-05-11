@@ -6,7 +6,7 @@ import java.util.concurrent.CountDownLatch;
  * Hello world!
  *
  */
-public class App 
+public class ZookeeperBootstrap
 {
     public static void main( String[] args )
     {
