@@ -1,9 +1,9 @@
-import customtkinter as ctk
+ï»¿import customtkinter as ctk
 from tkinter import StringVar, messagebox
 from datetime import datetime
 
 # -------------------------
-# Ä£ÄâÊı¾İ
+# æ¨¡æ‹Ÿæ•°æ®
 # -------------------------
 ALL_PROJECTS = [
     "risk-control-core",
@@ -19,7 +19,7 @@ ALL_PROJECTS = [
 ]
 
 REVIEWERS = [
-    "ÕÅÈı", "ÀîËÄ", "ÍõÎå", "ÕÔÁù", "¼Ü¹¹Ê¦-A", "¸ºÔğÈË-B"
+    "å¼ ä¸‰", "æå››", "ç‹äº”", "èµµå…­", "æ¶æ„å¸ˆ-A", "è´Ÿè´£äºº-B"
 ]
 
 
@@ -27,7 +27,7 @@ class BranchToolApp(ctk.CTk):
 
     def __init__(self):
         super().__init__()
-        self.title("Git ·ÖÖ§¹ÜÀí¹¤¾ß")
+        self.title("Git åˆ†æ”¯ç®¡ç†å·¥å…·")
         self.geometry("1000x650")
 
         ctk.set_appearance_mode("System")
@@ -38,36 +38,36 @@ class BranchToolApp(ctk.CTk):
         self._init_content()
 
     # -------------------------
-    # ²¼¾Ö
+    # å¸ƒå±€
     # -------------------------
     def _init_layout(self):
         self.grid_columnconfigure(1, weight=1)
         self.grid_rowconfigure(0, weight=1)
 
     # -------------------------
-    # ×ó²à²Ëµ¥
+    # å·¦ä¾§èœå•
     # -------------------------
     def _init_sidebar(self):
         self.sidebar = ctk.CTkFrame(self, width=180, corner_radius=0)
         self.sidebar.grid(row=0, column=0, sticky="ns")
 
         ctk.CTkLabel(
-            self.sidebar, text="¹¦ÄÜ²Ëµ¥",
+            self.sidebar, text="åŠŸèƒ½èœå•",
             font=ctk.CTkFont(size=16, weight="bold")
         ).grid(row=0, column=0, padx=20, pady=(20, 10))
 
         ctk.CTkButton(
-            self.sidebar, text="´´½¨·ÖÖ§",
+            self.sidebar, text="åˆ›å»ºåˆ†æ”¯",
             command=self.show_create_branch_page
         ).grid(row=1, column=0, padx=20, pady=10)
 
         ctk.CTkButton(
-            self.sidebar, text="ºÏ²¢·ÖÖ§",
+            self.sidebar, text="åˆå¹¶åˆ†æ”¯",
             command=self.show_merge_branch_page
         ).grid(row=2, column=0, padx=20, pady=10)
 
     # -------------------------
-    # ÄÚÈİÇø
+    # å†…å®¹åŒº
     # -------------------------
     def _init_content(self):
         self.content_frame = ctk.CTkFrame(self, corner_radius=0)
@@ -84,7 +84,7 @@ class BranchToolApp(ctk.CTk):
         self.show_create_branch_page()
 
     # -------------------------
-    # ¿ØÖÆÌ¨£¨º¬Çå³ı°´Å¥£©
+    # æ§åˆ¶å°ï¼ˆå«æ¸…é™¤æŒ‰é’®ï¼‰
     # -------------------------
     def _init_console(self):
         console_frame = ctk.CTkFrame(self.content_frame)
@@ -94,12 +94,12 @@ class BranchToolApp(ctk.CTk):
         header.pack(fill="x", padx=10, pady=(5, 0))
 
         ctk.CTkLabel(
-            header, text="ÔËĞĞ¿ØÖÆÌ¨",
+            header, text="è¿è¡Œæ§åˆ¶å°",
             font=ctk.CTkFont(size=14, weight="bold")
         ).pack(side="left")
 
         ctk.CTkButton(
-            header, text="Çå³ı",
+            header, text="æ¸…é™¤",
             width=60,
             command=self.clear_console
         ).pack(side="right")
@@ -110,7 +110,7 @@ class BranchToolApp(ctk.CTk):
         self.console.pack(fill="both", expand=True, padx=10, pady=5)
 
     # -------------------------
-    # ÈÕÖ¾·½·¨
+    # æ—¥å¿—æ–¹æ³•
     # -------------------------
     def log(self, msg: str):
         timestamp = datetime.now().strftime("%H:%M:%S")
@@ -123,24 +123,24 @@ class BranchToolApp(ctk.CTk):
         self.console.configure(state="normal")
         self.console.delete("1.0", "end")
         self.console.configure(state="disabled")
-        self.log("¿ØÖÆÌ¨ÈÕÖ¾ÒÑÇå¿Õ")
+        self.log("æ§åˆ¶å°æ—¥å¿—å·²æ¸…ç©º")
 
     def clear_page(self):
         for w in self.page_frame.winfo_children():
             w.destroy()
 
     # =====================================================
-    # ´´½¨·ÖÖ§Ò³Ãæ
+    # åˆ›å»ºåˆ†æ”¯é¡µé¢
     # =====================================================
     def show_create_branch_page(self):
         self.clear_page()
-        self.log("ÇĞ»»µ½¡¾´´½¨·ÖÖ§¡¿Ò³Ãæ")
+        self.log("åˆ‡æ¢åˆ°ã€åˆ›å»ºåˆ†æ”¯ã€‘é¡µé¢")
 
         frame = ctk.CTkFrame(self.page_frame)
         frame.pack(fill="both", expand=True, padx=30, pady=20)
 
         ctk.CTkLabel(
-            frame, text="´´½¨·ÖÖ§",
+            frame, text="åˆ›å»ºåˆ†æ”¯",
             font=ctk.CTkFont(size=20, weight="bold")
         ).pack(anchor="w", pady=(0, 20))
 
@@ -149,7 +149,7 @@ class BranchToolApp(ctk.CTk):
 
         ctk.CTkEntry(
             frame, textvariable=search_var,
-            placeholder_text="ËÑË÷ÏîÄ¿"
+            placeholder_text="æœç´¢é¡¹ç›®"
         ).pack(fill="x")
 
         list_frame = ctk.CTkScrollableFrame(frame, height=120)
@@ -176,40 +176,40 @@ class BranchToolApp(ctk.CTk):
         refresh()
 
         branch_entry = ctk.CTkEntry(
-            frame, placeholder_text="·ÖÖ§Ãû£¨Èç feature/login£©"
+            frame, placeholder_text="åˆ†æ”¯åï¼ˆå¦‚ feature/loginï¼‰"
         )
         branch_entry.pack(fill="x", pady=10)
 
         def confirm():
             if not project_var.get() or not branch_entry.get():
-                messagebox.showerror("´íÎó", "ÇëÌîĞ´ÍêÕûĞÅÏ¢")
+                messagebox.showerror("é”™è¯¯", "è¯·å¡«å†™å®Œæ•´ä¿¡æ¯")
                 return
 
-            self.log(f"¿ªÊ¼´´½¨·ÖÖ§£º{project_var.get()} -> {branch_entry.get()}")
-            self.log("·ÖÖ§´´½¨³É¹¦£¨Ä£Äâ£©")
-            messagebox.showinfo("³É¹¦", "·ÖÖ§´´½¨³É¹¦")
+            self.log(f"å¼€å§‹åˆ›å»ºåˆ†æ”¯ï¼š{project_var.get()} -> {branch_entry.get()}")
+            self.log("åˆ†æ”¯åˆ›å»ºæˆåŠŸï¼ˆæ¨¡æ‹Ÿï¼‰")
+            messagebox.showinfo("æˆåŠŸ", "åˆ†æ”¯åˆ›å»ºæˆåŠŸ")
 
-        ctk.CTkButton(frame, text="È·ÈÏ´´½¨", command=confirm).pack(anchor="e")
+        ctk.CTkButton(frame, text="ç¡®è®¤åˆ›å»º", command=confirm).pack(anchor="e")
 
     # =====================================================
-    # ºÏ²¢·ÖÖ§Ò³Ãæ
+    # åˆå¹¶åˆ†æ”¯é¡µé¢
     # =====================================================
     def show_merge_branch_page(self):
         self.clear_page()
-        self.log("ÇĞ»»µ½¡¾ºÏ²¢·ÖÖ§¡¿Ò³Ãæ")
+        self.log("åˆ‡æ¢åˆ°ã€åˆå¹¶åˆ†æ”¯ã€‘é¡µé¢")
 
         frame = ctk.CTkFrame(self.page_frame)
         frame.pack(fill="both", expand=True, padx=30, pady=20)
 
         ctk.CTkLabel(
-            frame, text="ºÏ²¢·ÖÖ§",
+            frame, text="åˆå¹¶åˆ†æ”¯",
             font=ctk.CTkFont(size=20, weight="bold")
         ).pack(anchor="w", pady=(0, 20))
 
         search_var = StringVar()
         ctk.CTkEntry(
             frame, textvariable=search_var,
-            placeholder_text="ËÑË÷ÏîÄ¿£¨¿É¶àÑ¡£©"
+            placeholder_text="æœç´¢é¡¹ç›®ï¼ˆå¯å¤šé€‰ï¼‰"
         ).pack(fill="x")
 
         project_frame = ctk.CTkScrollableFrame(frame, height=120)
@@ -232,13 +232,13 @@ class BranchToolApp(ctk.CTk):
         search_var.trace_add("write", lambda *_: refresh_projects())
         refresh_projects()
 
-        src_branch = ctk.CTkEntry(frame, placeholder_text="Ô´·ÖÖ§")
+        src_branch = ctk.CTkEntry(frame, placeholder_text="æºåˆ†æ”¯")
         src_branch.pack(fill="x", pady=5)
 
-        tgt_branch = ctk.CTkEntry(frame, placeholder_text="Ä¿±ê·ÖÖ§")
+        tgt_branch = ctk.CTkEntry(frame, placeholder_text="ç›®æ ‡åˆ†æ”¯")
         tgt_branch.pack(fill="x", pady=5)
 
-        ctk.CTkLabel(frame, text="´úÂëÉó²éÈËÔ±").pack(anchor="w", pady=(10, 5))
+        ctk.CTkLabel(frame, text="ä»£ç å®¡æŸ¥äººå‘˜").pack(anchor="w", pady=(10, 5))
         reviewer_frame = ctk.CTkFrame(frame)
         reviewer_frame.pack(fill="x")
 
@@ -251,15 +251,15 @@ class BranchToolApp(ctk.CTk):
         def confirm_merge():
             projects = [p for p, v in project_vars.items() if v.get()]
             if not projects or not src_branch.get() or not tgt_branch.get():
-                messagebox.showerror("´íÎó", "ÇëÌîĞ´ÍêÕûĞÅÏ¢")
+                messagebox.showerror("é”™è¯¯", "è¯·å¡«å†™å®Œæ•´ä¿¡æ¯")
                 return
 
-            self.log(f"Ìá½»ºÏ²¢ÇëÇó£º{projects}")
+            self.log(f"æäº¤åˆå¹¶è¯·æ±‚ï¼š{projects}")
             self.log(f"{src_branch.get()} -> {tgt_branch.get()}")
-            self.log("Merge Request ´´½¨³É¹¦£¨Ä£Äâ£©")
-            messagebox.showinfo("³É¹¦", "ºÏ²¢ÇëÇóÒÑÌá½»")
+            self.log("Merge Request åˆ›å»ºæˆåŠŸï¼ˆæ¨¡æ‹Ÿï¼‰")
+            messagebox.showinfo("æˆåŠŸ", "åˆå¹¶è¯·æ±‚å·²æäº¤")
 
-        ctk.CTkButton(frame, text="È·ÈÏºÏ²¢", command=confirm_merge).pack(anchor="e", pady=10)
+        ctk.CTkButton(frame, text="ç¡®è®¤åˆå¹¶", command=confirm_merge).pack(anchor="e", pady=10)
 
 
 if __name__ == "__main__":
