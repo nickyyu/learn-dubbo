@@ -1,267 +1,189 @@
-﻿import customtkinter as ctk
-from tkinter import StringVar, messagebox
-from datetime import datetime
+﻿import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 
-# -------------------------
-# 模拟数据
-# -------------------------
-ALL_PROJECTS = [
-    "risk-control-core",
-    "risk-control-model",
-    "payment-gateway",
-    "user-center",
-    "order-service",
-    "account-service",
-    "data-platform",
-    "anti-fraud-engine",
-    "report-service",
-    "gateway-service",
-]
+public class OrderEvent {
+    public String uid;
+    public String orderId;
+    public Long createTime; 
+    public String op;       
 
-REVIEWERS = [
-    "张三", "李四", "王五", "赵六", "架构师-A", "负责人-B"
-]
+    public static OrderEvent fromCdcJson(String jsonStr) {
+        try {
+            // Gson 解析入口
+            JsonObject root = JsonParser.parseString(jsonStr).getAsJsonObject();
+            
+            // 提取操作类型 (op)
+            String op = getStringSafe(root, "op");
+            
+            // 获取 after 节点
+            JsonElement afterElement = root.get("after");
+            if (afterElement != null && !afterElement.isJsonNull()) {
+                JsonObject after = afterElement.getAsJsonObject();
+                
+                OrderEvent event = new OrderEvent();
+                event.op = op;
+                
+                // 使用安全辅助方法提取业务字段
+                event.uid = getStringSafe(after, "Fuid");
+                event.orderId = getStringSafe(after, "Frc_order_id");
+                event.createTime = getLongSafe(after, "Fcreate_time");
+                
+                // 数据完整性校验，必须包含风控核心三要素才向下游发送
+                if (event.uid != null && event.orderId != null && event.createTime != null) {
+                    return event;
+                }
+            }
+        } catch (Exception e) {
+            // 生产环境建议：将抛出异常的 jsonStr 发送到 Side Output (侧输出流) 或打入 Error Logger
+        }
+        return null;
+    }
 
+    // ================== 辅助安全提取方法 ==================
 
-class BranchToolApp(ctk.CTk):
+    /**
+     * 安全提取 String 字段，防止 NullPointerException
+     */
+    private static String getStringSafe(JsonObject obj, String key) {
+        JsonElement element = obj.get(key);
+        return (element != null && !element.isJsonNull()) ? element.getAsString() : null;
+    }
 
-    def __init__(self):
-        super().__init__()
-        self.title("Git 分支管理工具")
-        self.geometry("1000x650")
-
-        ctk.set_appearance_mode("System")
-        ctk.set_default_color_theme("blue")
-
-        self._init_layout()
-        self._init_sidebar()
-        self._init_content()
-
-    # -------------------------
-    # 布局
-    # -------------------------
-    def _init_layout(self):
-        self.grid_columnconfigure(1, weight=1)
-        self.grid_rowconfigure(0, weight=1)
-
-    # -------------------------
-    # 左侧菜单
-    # -------------------------
-    def _init_sidebar(self):
-        self.sidebar = ctk.CTkFrame(self, width=180, corner_radius=0)
-        self.sidebar.grid(row=0, column=0, sticky="ns")
-
-        ctk.CTkLabel(
-            self.sidebar, text="功能菜单",
-            font=ctk.CTkFont(size=16, weight="bold")
-        ).grid(row=0, column=0, padx=20, pady=(20, 10))
-
-        ctk.CTkButton(
-            self.sidebar, text="创建分支",
-            command=self.show_create_branch_page
-        ).grid(row=1, column=0, padx=20, pady=10)
-
-        ctk.CTkButton(
-            self.sidebar, text="合并分支",
-            command=self.show_merge_branch_page
-        ).grid(row=2, column=0, padx=20, pady=10)
-
-    # -------------------------
-    # 内容区
-    # -------------------------
-    def _init_content(self):
-        self.content_frame = ctk.CTkFrame(self, corner_radius=0)
-        self.content_frame.grid(row=0, column=1, sticky="nsew")
-
-        self.content_frame.grid_rowconfigure(0, weight=3)
-        self.content_frame.grid_rowconfigure(1, weight=1)
-        self.content_frame.grid_columnconfigure(0, weight=1)
-
-        self.page_frame = ctk.CTkFrame(self.content_frame)
-        self.page_frame.grid(row=0, column=0, sticky="nsew")
-
-        self._init_console()
-        self.show_create_branch_page()
-
-    # -------------------------
-    # 控制台（含清除按钮）
-    # -------------------------
-    def _init_console(self):
-        console_frame = ctk.CTkFrame(self.content_frame)
-        console_frame.grid(row=1, column=0, sticky="nsew", padx=10, pady=(0, 10))
-
-        header = ctk.CTkFrame(console_frame)
-        header.pack(fill="x", padx=10, pady=(5, 0))
-
-        ctk.CTkLabel(
-            header, text="运行控制台",
-            font=ctk.CTkFont(size=14, weight="bold")
-        ).pack(side="left")
-
-        ctk.CTkButton(
-            header, text="清除",
-            width=60,
-            command=self.clear_console
-        ).pack(side="right")
-
-        self.console = ctk.CTkTextbox(
-            console_frame, height=120, state="disabled"
-        )
-        self.console.pack(fill="both", expand=True, padx=10, pady=5)
-
-    # -------------------------
-    # 日志方法
-    # -------------------------
-    def log(self, msg: str):
-        timestamp = datetime.now().strftime("%H:%M:%S")
-        self.console.configure(state="normal")
-        self.console.insert("end", f"[{timestamp}] {msg}\n")
-        self.console.see("end")
-        self.console.configure(state="disabled")
-
-    def clear_console(self):
-        self.console.configure(state="normal")
-        self.console.delete("1.0", "end")
-        self.console.configure(state="disabled")
-        self.log("控制台日志已清空")
-
-    def clear_page(self):
-        for w in self.page_frame.winfo_children():
-            w.destroy()
-
-    # =====================================================
-    # 创建分支页面
-    # =====================================================
-    def show_create_branch_page(self):
-        self.clear_page()
-        self.log("切换到【创建分支】页面")
-
-        frame = ctk.CTkFrame(self.page_frame)
-        frame.pack(fill="both", expand=True, padx=30, pady=20)
-
-        ctk.CTkLabel(
-            frame, text="创建分支",
-            font=ctk.CTkFont(size=20, weight="bold")
-        ).pack(anchor="w", pady=(0, 20))
-
-        project_var = StringVar()
-        search_var = StringVar()
-
-        ctk.CTkEntry(
-            frame, textvariable=search_var,
-            placeholder_text="搜索项目"
-        ).pack(fill="x")
-
-        list_frame = ctk.CTkScrollableFrame(frame, height=120)
-        list_frame.pack(fill="x", pady=10)
-
-        radios = []
-
-        def refresh():
-            for r in radios:
-                r.destroy()
-            radios.clear()
-
-            key = search_var.get().lower()
-            for p in ALL_PROJECTS:
-                if key in p.lower():
-                    rb = ctk.CTkRadioButton(
-                        list_frame, text=p,
-                        variable=project_var, value=p
-                    )
-                    rb.pack(anchor="w", padx=10)
-                    radios.append(rb)
-
-        search_var.trace_add("write", lambda *_: refresh())
-        refresh()
-
-        branch_entry = ctk.CTkEntry(
-            frame, placeholder_text="分支名（如 feature/login）"
-        )
-        branch_entry.pack(fill="x", pady=10)
-
-        def confirm():
-            if not project_var.get() or not branch_entry.get():
-                messagebox.showerror("错误", "请填写完整信息")
-                return
-
-            self.log(f"开始创建分支：{project_var.get()} -> {branch_entry.get()}")
-            self.log("分支创建成功（模拟）")
-            messagebox.showinfo("成功", "分支创建成功")
-
-        ctk.CTkButton(frame, text="确认创建", command=confirm).pack(anchor="e")
-
-    # =====================================================
-    # 合并分支页面
-    # =====================================================
-    def show_merge_branch_page(self):
-        self.clear_page()
-        self.log("切换到【合并分支】页面")
-
-        frame = ctk.CTkFrame(self.page_frame)
-        frame.pack(fill="both", expand=True, padx=30, pady=20)
-
-        ctk.CTkLabel(
-            frame, text="合并分支",
-            font=ctk.CTkFont(size=20, weight="bold")
-        ).pack(anchor="w", pady=(0, 20))
-
-        search_var = StringVar()
-        ctk.CTkEntry(
-            frame, textvariable=search_var,
-            placeholder_text="搜索项目（可多选）"
-        ).pack(fill="x")
-
-        project_frame = ctk.CTkScrollableFrame(frame, height=120)
-        project_frame.pack(fill="x", pady=10)
-
-        project_vars = {}
-
-        def refresh_projects():
-            for w in project_frame.winfo_children():
-                w.destroy()
-            project_vars.clear()
-
-            key = search_var.get().lower()
-            for p in ALL_PROJECTS:
-                if key in p.lower():
-                    var = ctk.BooleanVar()
-                    ctk.CTkCheckBox(project_frame, text=p, variable=var).pack(anchor="w", padx=10)
-                    project_vars[p] = var
-
-        search_var.trace_add("write", lambda *_: refresh_projects())
-        refresh_projects()
-
-        src_branch = ctk.CTkEntry(frame, placeholder_text="源分支")
-        src_branch.pack(fill="x", pady=5)
-
-        tgt_branch = ctk.CTkEntry(frame, placeholder_text="目标分支")
-        tgt_branch.pack(fill="x", pady=5)
-
-        ctk.CTkLabel(frame, text="代码审查人员").pack(anchor="w", pady=(10, 5))
-        reviewer_frame = ctk.CTkFrame(frame)
-        reviewer_frame.pack(fill="x")
-
-        reviewer_vars = {}
-        for r in REVIEWERS:
-            var = ctk.BooleanVar()
-            ctk.CTkCheckBox(reviewer_frame, text=r, variable=var).pack(side="left", padx=10)
-            reviewer_vars[r] = var
-
-        def confirm_merge():
-            projects = [p for p, v in project_vars.items() if v.get()]
-            if not projects or not src_branch.get() or not tgt_branch.get():
-                messagebox.showerror("错误", "请填写完整信息")
-                return
-
-            self.log(f"提交合并请求：{projects}")
-            self.log(f"{src_branch.get()} -> {tgt_branch.get()}")
-            self.log("Merge Request 创建成功（模拟）")
-            messagebox.showinfo("成功", "合并请求已提交")
-
-        ctk.CTkButton(frame, text="确认合并", command=confirm_merge).pack(anchor="e", pady=10)
+    /**
+     * 安全提取 Long 字段，防止 NullPointerException
+     */
+    private static Long getLongSafe(JsonObject obj, String key) {
+        JsonElement element = obj.get(key);
+        return (element != null && !element.isJsonNull()) ? element.getAsLong() : null;
+    }
+}
 
 
-if __name__ == "__main__":
-    app = BranchToolApp()
-    app.mainloop()
+
+
+
+import org.apache.flink.api.common.eventtime.WatermarkStrategy;
+import org.apache.flink.api.common.serialization.SimpleStringSchema;
+import org.apache.flink.configuration.Configuration;
+import org.apache.flink.connector.kafka.source.KafkaSource;
+import org.apache.flink.connector.kafka.source.enumerator.initializer.OffsetsInitializer;
+import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+
+import java.time.Duration;
+
+public class UserOrderVelocityJob {
+
+    public static void main(String[] args) throws Exception {
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+        env.enableCheckpointing(60000); 
+
+        // 假设 CDC 数据已经进入 Kafka
+        KafkaSource<String> kafkaSource = KafkaSource.<String>builder()
+                .setBootstrapServers("your_kafka_broker:9092")
+                .setTopics("mysql_cdc_t_rc_order_info")
+                .setGroupId("flink-risk-order-velocity")
+                .setStartingOffsets(OffsetsInitializer.latest())
+                .setValueOnlyDeserializer(new SimpleStringSchema())
+                .build();
+
+        env.fromSource(kafkaSource, WatermarkStrategy.noWatermarks(), "MySQL CDC Source")
+                .map(OrderEvent::fromCdcJson)
+                .filter(event -> event != null)
+                // 风控场景：通常我们只统计进件/下单动作，即使最终失败，申请行为本身也代表了风险意图
+                // 但如果明确需要排除物理删除的数据，可以加一句：.filter(event -> !"d".equals(event.op))
+                .assignTimestampsAndWatermarks(
+                        WatermarkStrategy.<OrderEvent>forBoundedOutOfOrderness(Duration.ofSeconds(5))
+                                .withTimestampAssigner((event, timestamp) -> event.createTime)
+                )
+                // 按 Fuid 分组计算
+                .keyBy(event -> event.uid)
+                // 接入 24 小时去重统计
+                .process(new SlidingOrderDistinctProcessFunction())
+                .print("Velocity Result");
+
+        env.execute("Risk Feature: User 24H Order Count");
+    }
+}
+
+
+
+import org.apache.flink.api.common.state.MapState;
+import org.apache.flink.api.common.state.MapStateDescriptor;
+import org.apache.flink.api.common.typeinfo.Types;
+import org.apache.flink.api.java.tuple.Tuple2;
+import org.apache.flink.configuration.Configuration;
+import org.apache.flink.streaming.api.functions.KeyedProcessFunction;
+import org.apache.flink.util.Collector;
+
+import java.util.Iterator;
+import java.util.Map;
+
+/**
+ * 输出：Tuple2<String, Integer> -> <Fuid, 近24小时的去重订单数>
+ */
+public class SlidingOrderDistinctProcessFunction extends KeyedProcessFunction<String, OrderEvent, Tuple2<String, Integer>> {
+
+    // 状态：记录该 UID 下，每个 OrderId 对应的创建时间
+    private transient MapState<String, Long> orderState;
+
+    private static final long WINDOW_SIZE_MS = 24 * 60 * 60 * 1000L;
+
+    @Override
+    public void open(Configuration parameters) throws Exception {
+        MapStateDescriptor<String, Long> descriptor = new MapStateDescriptor<>(
+                "uid-order-state",
+                Types.STRING,
+                Types.LONG
+        );
+        orderState = getRuntimeContext().getMapState(descriptor);
+    }
+
+    @Override
+    public void processElement(OrderEvent value, Context ctx, Collector<Tuple2<String, Integer>> out) throws Exception {
+        long currentEventTime = value.createTime;
+        
+        // Flink CDC UPDATE 消息放大处理：
+        // 即使一条订单被 UPDATE 多次，由于 Map 的 Key 相同，它只会更新 Value（或者幂等写入），
+        // 从而完美实现 "去重" 目标。
+        orderState.put(value.orderId, currentEventTime);
+
+        // 注册 24 小时后的定时器，用于精准踢出过期订单
+        ctx.timerService().registerEventTimeTimer(currentEventTime + WINDOW_SIZE_MS);
+
+        // 输出最新聚合特征
+        out.collect(Tuple2.of(value.uid, getOrderCount()));
+    }
+
+    @Override
+    public void onTimer(long timestamp, OnTimerContext ctx, Collector<Tuple2<String, Integer>> out) throws Exception {
+        long cutoffTime = timestamp - WINDOW_SIZE_MS;
+
+        Iterator<Map.Entry<String, Long>> iterator = orderState.iterator();
+        boolean stateChanged = false;
+
+        while (iterator.hasNext()) {
+            Map.Entry<String, Long> entry = iterator.next();
+            // 如果该订单的创建时间已经落后于 24 小时前，则将其从状态中剔除
+            if (entry.getValue() <= cutoffTime) {
+                iterator.remove();
+                stateChanged = true;
+            }
+        }
+
+        // 仅在数据过期导致总数发生变化时，才向下游发送最新的特征值
+        if (stateChanged) {
+            out.collect(Tuple2.of(ctx.getCurrentKey(), getOrderCount()));
+        }
+    }
+
+    private int getOrderCount() throws Exception {
+        int count = 0;
+        // MapState.keys() 的迭代在 RocksDB 后端下只会在反序列化 Key 时产生开销，
+        // 考虑到单用户的 24 小时订单量通常在个位数到十位数级别，这里的性能损耗微乎其微。
+        for (String ignored : orderState.keys()) {
+            count++;
+        }
+        return count;
+    }
+}
