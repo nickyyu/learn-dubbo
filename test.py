@@ -1,284 +1,229 @@
-// 1. 清洗后的源数据模型
-public class UserDeviceEvent {
-    public String fuid;
-    public String deviceId;
-    public long eventTime;
-    
-    public UserDeviceEvent(String fuid, String deviceId, long eventTime) {
-        this.fuid = fuid;
-        this.deviceId = deviceId;
-        this.eventTime = eventTime;
-    }
-}
-
-// 2. 统计结果模型
-public class UserDeviceMetric {
-    public String fuid;
-    public long distinctDeviceCount;
-    public long updateTime; // 记录计算出的真实时间
-
-    public UserDeviceMetric(String fuid, long distinctDeviceCount, long updateTime) {
-        this.fuid = fuid;
-        this.distinctDeviceCount = distinctDeviceCount;
-        this.updateTime = updateTime;
-    }
-}
-
-
+package com.risk.sync.function;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import org.apache.flink.api.common.eventtime.WatermarkStrategy;
-import org.apache.flink.api.common.functions.FlatMapFunction;
-import org.apache.flink.api.common.serialization.SimpleStringSchema;
-import org.apache.flink.connector.jdbc.JdbcConnectionOptions;
-import org.apache.flink.connector.jdbc.JdbcExecutionOptions;
-import org.apache.flink.connector.jdbc.JdbcSink;
-import org.apache.flink.connector.kafka.source.KafkaSource;
-import org.apache.flink.connector.kafka.source.enumerator.initializer.OffsetsInitializer;
-import org.apache.flink.streaming.api.datastream.DataStream;
-import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+import com.risk.sync.model.BlacklistSyncEvent;
+import org.apache.flink.api.common.functions.RichFlatMapFunction;
+import org.apache.flink.configuration.Configuration;
 import org.apache.flink.util.Collector;
 
-import java.time.Duration;
+public class DebeziumParserFunction extends RichFlatMapFunction<String, BlacklistSyncEvent> {
 
-public class DeviceFingerprintMetricJob {
+    // 必须为 transient，不可被 Flink 跨网络序列化
+    private transient ObjectMapper objectMapper;
+
+    @Override
+    public void open(Configuration parameters) throws Exception {
+        // 在 TaskManager 线程中实例化 Jackson ObjectMapper
+        this.objectMapper = new ObjectMapper();
+    }
+
+    @Override
+    public void flatMap(String value, Collector<BlacklistSyncEvent> out) throws Exception {
+        JsonNode rootNode = objectMapper.readTree(value);
+        if (rootNode == null || !rootNode.has("op") || rootNode.get("op").isNull()) {
+            return;
+        }
+
+        String op = rootNode.get("op").asText();
+        JsonNode dataNode;
+        String syncAction;
+
+        // 判断 CDC 操作动作
+        if ("d".equals(op)) {
+            dataNode = rootNode.get("before"); // 删除操作拿旧数据
+            syncAction = "DELETE";
+        } else {
+            dataNode = rootNode.get("after");  // 新增/更新/全量读拿新数据
+            syncAction = "UPSERT";
+        }
+
+        // 清洗与映射
+        if (dataNode != null && !dataNode.isNull()) {
+            String idCard = dataNode.hasNonNull("id_card") ? dataNode.get("id_card").asText() : null;
+            String riskType = dataNode.hasNonNull("risk_type") ? dataNode.get("risk_type").asText() : null;
+            String reason = dataNode.hasNonNull("reason") ? dataNode.get("reason").asText() : null;
+            long createTime = dataNode.hasNonNull("create_time") ? dataNode.get("create_time").asLong() : 0L;
+
+            if (idCard != null && !idCard.trim().isEmpty()) {
+                out.collect(new BlacklistSyncEvent(syncAction, idCard.trim(), riskType, reason, createTime));
+            }
+        }
+    }
+}
+
+package com.risk.sync.model;
+
+import java.io.Serializable;
+
+public class BlacklistSyncEvent implements Serializable {
+    public String syncAction; // "UPSERT" 或 "DELETE"
+    public String idCard;
+    public String riskType;
+    public String reason;
+    public long createTime;
+
+    public BlacklistSyncEvent() {} // Jackson 反序列化需要无参构造
+
+    public BlacklistSyncEvent(String syncAction, String idCard, String riskType, String reason, long createTime) {
+        this.syncAction = syncAction;
+        this.idCard = idCard;
+        this.riskType = riskType;
+        this.reason = reason;
+        this.createTime = createTime;
+    }
+}
+
+package com.risk.sync.function;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.risk.sync.model.BlacklistSyncEvent;
+import org.apache.flink.api.java.utils.ParameterTool;
+import org.apache.flink.configuration.Configuration;
+import org.apache.flink.streaming.api.functions.sink.RichSinkFunction;
+import redis.clients.jedis.Jedis;
+import redis.clients.jedis.JedisPool;
+import redis.clients.jedis.JedisPoolConfig;
+
+public class JedisSinkFunction extends RichSinkFunction<BlacklistSyncEvent> {
+
+    private transient JedisPool jedisPool;
+    private transient ObjectMapper objectMapper;
+    private static final String REDIS_KEY_PREFIX = "risk:blacklist:idcard:";
+
+    @Override
+    public void open(Configuration parameters) throws Exception {
+        this.objectMapper = new ObjectMapper();
+
+        ParameterTool globalParams = (ParameterTool) getRuntimeContext()
+                .getExecutionConfig().getGlobalJobParameters();
+
+        String host = globalParams.getRequired("redis.host");
+        int port = globalParams.getInt("redis.port", 6379);
+        String password = globalParams.get("redis.password", "");
+        int db = globalParams.getInt("redis.db", 0);
+
+        JedisPoolConfig poolConfig = new JedisPoolConfig();
+        poolConfig.setMaxTotal(50);
+        poolConfig.setMaxIdle(10);
+        poolConfig.setTestOnBorrow(true);
+
+        if (password.isEmpty()) {
+            jedisPool = new JedisPool(poolConfig, host, port, 5000);
+        } else {
+            jedisPool = new JedisPool(poolConfig, host, port, 5000, password, db);
+        }
+    }
+
+    @Override
+    public void invoke(BlacklistSyncEvent event, Context context) throws Exception {
+        String redisKey = REDIS_KEY_PREFIX + event.idCard;
+
+        try (Jedis jedis = jedisPool.getResource()) {
+            if ("DELETE".equals(event.syncAction)) {
+                jedis.del(redisKey);
+            } else if ("UPSERT".equals(event.syncAction)) {
+                // 将 POJO 序列化为 JSON 写入 Redis
+                String jsonString = objectMapper.writeValueAsString(event);
+                jedis.set(redisKey, jsonString);
+            }
+        }
+    }
+
+    @Override
+    public void close() throws Exception {
+        if (jedisPool != null && !jedisPool.isClosed()) {
+            jedisPool.close();
+        }
+    }
+}
+
+package com.risk.sync;
+
+import com.alibaba.nacos.api.NacosFactory;
+import com.alibaba.nacos.api.config.ConfigService;
+import com.risk.sync.function.DebeziumParserFunction;
+import com.risk.sync.function.JedisSinkFunction;
+import com.risk.sync.model.BlacklistSyncEvent;
+import com.ververica.cdc.connectors.mysql.source.MySqlSource;
+import com.ververica.cdc.debezium.JsonDebeziumDeserializationSchema;
+import org.apache.flink.api.common.eventtime.WatermarkStrategy;
+import org.apache.flink.api.java.utils.ParameterTool;
+import org.apache.flink.streaming.api.datastream.DataStream;
+import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+
+import java.io.ByteArrayInputStream;
+import java.io.InputStream;
+import java.util.Properties;
+
+public class BlacklistSyncJob {
 
     public static void main(String[] args) throws Exception {
         StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
-        // 生产环境必须开启 Checkpoint 保障 Exactly-Once
-        env.enableCheckpointing(10000); 
 
-        // 1. 构建 Kafka Source (FLIP-27 规范)
-        KafkaSource<String> kafkaSource = KafkaSource.<String>builder()
-                .setBootstrapServers("127.0.0.1:9092")
-                .setTopics("cdc_app_event_topic")
-                .setGroupId("risk_metric_group")
-                .setStartingOffsets(OffsetsInitializer.latest())
-                .setValueOnlyDeserializer(new SimpleStringSchema())
+        // 1. 本地引导配置加载
+        ParameterTool cliParams = ParameterTool.fromArgs(args);
+        String envName = cliParams.get("env", "prd");
+        
+        System.out.println("====== 加载环境引导: application-" + envName + ".properties ======");
+        ParameterTool bootstrapParams;
+        try (InputStream is = BlacklistSyncJob.class.getClassLoader()
+                .getResourceAsStream("application-" + envName + ".properties")) {
+            bootstrapParams = ParameterTool.fromPropertiesFile(is);
+        }
+
+        // 2. Nacos 远程配置拉取
+        Properties nacosProps = new Properties();
+        nacosProps.put("serverAddr", bootstrapParams.getRequired("nacos.server-addr"));
+        nacosProps.put("namespace", bootstrapParams.getRequired("nacos.namespace"));
+
+        ConfigService configService = NacosFactory.createConfigService(nacosProps);
+        String remoteConfig = configService.getConfig(
+                bootstrapParams.getRequired("nacos.data-id"),
+                bootstrapParams.getRequired("nacos.group"),
+                5000
+        );
+
+        ParameterTool remoteParams = ParameterTool.fromPropertiesFile(
+                new ByteArrayInputStream(remoteConfig.getBytes("UTF-8")));
+
+        // 3. 全局参数合并与注册
+        ParameterTool globalParams = bootstrapParams.mergeWith(remoteParams).mergeWith(cliParams);
+        env.getConfig().setGlobalJobParameters(globalParams);
+
+        // 验证: 打印拿到的 Kafka 备用配置
+        System.out.println("成功加载 Nacos 配置，包含 Kafka 节点: " + globalParams.get("kafka.bootstrap.servers"));
+
+        // 4. 构建 MySQL CDC Source
+        MySqlSource<String> mySqlSource = MySqlSource.<String>builder()
+                .hostname(globalParams.getRequired("mysql.host"))
+                .port(globalParams.getInt("mysql.port", 3306))
+                .databaseList(globalParams.getRequired("mysql.db"))
+                .tableList(globalParams.getRequired("mysql.table"))
+                .username(globalParams.getRequired("mysql.user"))
+                .password(globalParams.getRequired("mysql.password"))
+                // false: 不包含 Debezium 冗余的 schema 元数据，仅输出核心数据负载
+                .deserializer(new JsonDebeziumDeserializationSchema(false))
                 .build();
 
-        // 2. 接入数据并进行 JSON 解析与清洗
-        DataStream<UserDeviceEvent> parsedStream = env
-                .fromSource(kafkaSource, WatermarkStrategy.noWatermarks(), "Kafka Source")
-                .flatMap(new CdcJsonParser())
-                .name("Parse CDC JSON");
+        // 5. 数据流处理拓扑
+        DataStream<String> cdcRawStream = env.fromSource(
+                mySqlSource,
+                WatermarkStrategy.noWatermarks(), // CDC 到 Redis 侧不需要容忍乱序的水印
+                "MySQL Blacklist Source"
+        );
 
-        // 3. 分配时间戳与水位线 (容忍 3 秒乱序)
-        DataStream<UserDeviceEvent> watermarkedStream = parsedStream
-                .assignTimestampsAndWatermarks(
-                        WatermarkStrategy.<UserDeviceEvent>forBoundedOutOfOrderness(Duration.ofSeconds(3))
-                                .withTimestampAssigner((event, timestamp) -> event.eventTime)
-                );
+        DataStream<BlacklistSyncEvent> cleanStream = cdcRawStream
+                .flatMap(new DebeziumParserFunction())
+                .name("Jackson Parse & Clean");
 
-        // 4. 核心计算：按 UID 分组，使用 ProcessFunction 计算近 24 小时去重设备数
-        DataStream<UserDeviceMetric> metricStream = watermarkedStream
-                .keyBy(event -> event.fuid)
-                .process(new RollingDeviceCountFunction())
-                .name("Calculate 24H Distinct Devices");
+        cleanStream
+                .addSink(new JedisSinkFunction())
+                .name("Redis Jedis Sink");
 
-        // 5. 写入 MySQL (达成“5秒出结果”的核心：微批 Upsert)
-        metricStream.addSink(
-                JdbcSink.sink(
-                        // 使用 ON DUPLICATE KEY UPDATE 实现结果的不断刷新
-                        "INSERT INTO user_device_metric_24h (fuid, device_count, update_time) " +
-                        "VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE " +
-                        "device_count = VALUES(device_count), update_time = VALUES(update_time)",
-                        (statement, metric) -> {
-                            statement.setString(1, metric.fuid);
-                            statement.setLong(2, metric.distinctDeviceCount);
-                            statement.setLong(3, metric.updateTime);
-                        },
-                        JdbcExecutionOptions.builder()
-                                .withBatchSize(1000)
-                                // 【关键性能配置】：每 5 秒强制刷写一次到 MySQL，满足实时性要求且不压垮 DB
-                                .withBatchIntervalMs(5000) 
-                                .withMaxRetries(3)
-                                .build(),
-                        new JdbcConnectionOptions.JdbcConnectionOptionsBuilder()
-                                .withUrl("jdbc:mysql://127.0.0.1:3306/risk_db?rewriteBatchedStatements=true")
-                                .withDriverName("com.mysql.cj.jdbc.Driver")
-                                .withUsername("root")
-                                .withPassword("123456")
-                                .build()
-                )
-        ).name("MySQL Upsert Sink");
+        // 6. 开启 Checkpoint 保障 exactly-once
+        env.enableCheckpointing(60000);
 
-        env.execute("24H User Device Fingerprint Metric Job");
-    }
-
-    // --- 内部类实现 ---
-
-    /**
-     * 步骤 A：解析 Flink CDC 产生的复杂 JSON
-     */
-    public static class CdcJsonParser implements FlatMapFunction<String, UserDeviceEvent> {
-        private transient ObjectMapper mapper;
-
-        @Override
-        public void flatMap(String value, Collector<UserDeviceEvent> out) throws Exception {
-            if (mapper == null) mapper = new ObjectMapper();
-            
-            JsonNode root = mapper.readTree(value);
-            // 过滤掉 Delete 操作，只处理 Create/Update/Read 快照
-            if (!root.has("op") || "d".equals(root.get("op").asText())) return;
-            if (!root.has("after") || root.get("after").isNull()) return;
-
-            JsonNode after = root.get("after");
-            String fuid = after.get("Fuid").asText();
-            
-            // 解析嵌套的 Fbusiness_info JSON 提取指纹
-            // 假设埋点里的指纹 Key 叫 "device_fp"
-            String bizInfoStr = after.get("Fbusiness_info").asText();
-            JsonNode bizInfo = mapper.readTree(bizInfoStr);
-            if (!bizInfo.has("device_fp")) return; 
-            String deviceId = bizInfo.get("device_fp").asText();
-
-            // 假设 Fcreate_time 抽取出来是长整型的时间戳 (毫秒)
-            long eventTime = after.get("Fcreate_time").asLong();
-
-            out.collect(new UserDeviceEvent(fuid, deviceId, eventTime));
-        }
+        env.execute("MySQL Blacklist to Redis Sync Job - " + envName);
     }
 }
-
-
-import org.apache.flink.api.common.state.MapState;
-import org.apache.flink.api.common.state.MapStateDescriptor;
-import org.apache.flink.configuration.Configuration;
-import org.apache.flink.streaming.api.functions.KeyedProcessFunction;
-import org.apache.flink.util.Collector;
-
-import java.util.ArrayList;
-import java.util.Iterator;
-import java.util.List;
-import java.util.Map;
-
-public class RollingDeviceCountFunction extends KeyedProcessFunction<String, UserDeviceEvent, UserDeviceMetric> {
-
-    // 状态：存储该用户使用过的各个设备，以及最后一次使用的时间戳
-    // Key: deviceId, Value: lastEventTime
-    private transient MapState<String, Long> deviceTimeState;
-    private static final long TWENTY_FOUR_HOURS_MS = 24 * 60 * 60 * 1000L;
-
-    @Override
-    public void open(Configuration parameters) {
-        MapStateDescriptor<String, Long> descriptor = 
-                new MapStateDescriptor<>("device-time-state", String.class, Long.class);
-        deviceTimeState = getRuntimeContext().getMapState(descriptor);
-    }
-
-    @Override
-    public void processElement(UserDeviceEvent event, Context ctx, Collector<UserDeviceMetric> out) throws Exception {
-        long currentEventTime = event.eventTime;
-        
-        // 1. 更新该设备的最后活跃时间
-        deviceTimeState.put(event.deviceId, currentEventTime);
-
-        // 2. 注册一个 24 小时后的定时器，用于自动清理过期设备
-        // 注意：如果该设备后续又有新活跃，时间被覆盖，定时器依然会触发，但我们在 onTimer 中会做条件校验
-        ctx.timerService().registerEventTimeTimer(currentEventTime + TWENTY_FOUR_HOURS_MS);
-
-        // 3. 计算当前窗口内（基于最新的 Watermark 向前推 24 小时）的去重设备数
-        long count = calculateActiveDevices(ctx.timerService().currentWatermark());
-        
-        // 4. 立即向下游发射最新结果
-        out.collect(new UserDeviceMetric(event.fuid, count, System.currentTimeMillis()));
-    }
-
-    @Override
-    public void onTimer(long timestamp, OnTimerContext ctx, Collector<UserDeviceMetric> out) throws Exception {
-        // 定时器触发，意味着有设备可能超过 24 小时未活跃了，执行物理清理
-        long currentWatermark = ctx.timerService().currentWatermark();
-        long threshold = currentWatermark - TWENTY_FOUR_HOURS_MS;
-        
-        List<String> expiredDevices = new ArrayList<>();
-        long activeCount = 0;
-
-        Iterator<Map.Entry<String, Long>> iterator = deviceTimeState.entries().iterator();
-        while (iterator.hasNext()) {
-            Map.Entry<String, Long> entry = iterator.next();
-            if (entry.getValue() <= threshold) {
-                // 已经 24 小时没见过这个设备了，标记删除
-                expiredDevices.add(entry.getKey());
-            } else {
-                activeCount++;
-            }
-        }
-
-        for (String deviceId : expiredDevices) {
-            deviceTimeState.remove(deviceId);
-        }
-
-        // 当有过期的设备被真正移除时，意味着指标发生变化，触发一次计算下发给 MySQL
-        if (!expiredDevices.isEmpty()) {
-            out.collect(new UserDeviceMetric(ctx.getCurrentKey(), activeCount, System.currentTimeMillis()));
-        }
-    }
-
-    /**
-     * 辅助方法：遍历状态，计算仍处于 24 小时窗口内的有效设备数
-     */
-    private long calculateActiveDevices(long currentWatermark) throws Exception {
-        long count = 0;
-        long threshold = currentWatermark - TWENTY_FOUR_HOURS_MS;
-        for (Long lastActiveTime : deviceTimeState.values()) {
-            // 只统计 24 小时内活跃过的设备
-            if (lastActiveTime > threshold) {
-                count++;
-            }
-        }
-        return count;
-    }
-}
-
-
-<properties>
-    <maven.compiler.source>11</maven.compiler.source>
-    <maven.compiler.target>11</maven.compiler.target>
-    <flink.version>1.20.0</flink.version>
-</properties>
-
-<dependencies>
-    <!-- Flink 1.20 核心依赖 -->
-    <dependency>
-        <groupId>org.apache.flink</groupId>
-        <artifactId>flink-streaming-java</artifactId>
-        <version>${flink.version}</version>
-        <scope>provided</scope>
-    </dependency>
-    <dependency>
-        <groupId>org.apache.flink</groupId>
-        <artifactId>flink-clients</artifactId>
-        <version>${flink.version}</version>
-        <scope>provided</scope>
-    </dependency>
-
-    <!-- Flink 官方 Kafka 连接器 (1.20 专属版本) -->
-    <dependency>
-        <groupId>org.apache.flink</groupId>
-        <artifactId>flink-connector-kafka</artifactId>
-        <version>3.3.0-1.20</version>
-    </dependency>
-
-    <!-- Flink 官方 JDBC 连接器 (3.2.0 版本完美兼容 1.19/1.20) -->
-    <dependency>
-        <groupId>org.apache.flink</groupId>
-        <artifactId>flink-connector-jdbc</artifactId>
-        <version>3.2.0-1.19</version>
-    </dependency>
-
-    <!-- MySQL 官方驱动 -->
-    <dependency>
-        <groupId>com.mysql</groupId>
-        <artifactId>mysql-connector-j</artifactId>
-        <version>8.3.0</version>
-    </dependency>
-
-    <!-- Jackson JSON 处理 -->
-    <dependency>
-        <groupId>com.fasterxml.jackson.core</groupId>
-        <artifactId>jackson-databind</artifactId>
-        <version>2.15.2</version>
-    </dependency>
-</dependencies>
