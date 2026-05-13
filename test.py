@@ -1,69 +1,118 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- monitorInterval="30" 意味着修改此文件无需重启任务，30秒后自动热加载生效 -->
-<Configuration status="WARN" monitorInterval="30">
-    
+<Configuration status="WARN">
+
+    <!-- 1. 定义全局变量，方便统一修改 -->
+    <Properties>
+        <!-- 【极其重要】这里改成你服务器上实际的日志目录路径 -->
+        <Property name="LOG_HOME">/app/logs/flink/fkxt</Property>
+        <Property name="APP_NAME">risk-feature-job</Property>
+    </Properties>
+
     <Appenders>
-        <!-- 控制台输出格式：增加了 %c{1.} 使得长包名折叠，日志看起来更整洁 -->
-        <Console name="Console" target="SYSTEM_OUT">
-            <PatternLayout pattern="%d{yyyy-MM-dd HH:mm:ss.SSS} [%t] %-5level %c{1.} - %msg%n"/>
-        </Console>
+        <!-- 2. 配置滚动文件归档策略 -->
+        <RollingFile name="RollingFile" 
+                     fileName="${LOG_HOME}/${APP_NAME}.log"
+                     filePattern="${LOG_HOME}/$${date:yyyy-MM}/${APP_NAME}-%d{yyyy-MM-dd}-%i.log.gz">
+            
+            <PatternLayout pattern="%d{yyyy-MM-dd HH:mm:ss.SSS} [%t] %-5level %logger{36} - %msg%n"/>
+            
+            <Policies>
+                <!-- 策略一：按天归档（配合 filePattern 里的 %d{yyyy-MM-dd} 使用） -->
+                <TimeBasedTriggeringPolicy interval="1" modulate="true"/>
+                <!-- 策略二：如果一天内日志太多，单文件超过 100MB，自动触发切分 (-%i 会递增) -->
+                <SizeBasedTriggeringPolicy size="100 MB"/>
+            </Policies>
+            
+            <!-- 3. 配置日志保留与自动清理策略 -->
+            <DefaultRolloverStrategy max="50">
+                <!-- 自动删除 ${LOG_HOME} 目录下，15天前的 .gz 压缩包 -->
+                <Delete basePath="${LOG_HOME}" maxDepth="2">
+                    <IfFileName glob="*/${APP_NAME}-*.log.gz"/>
+                    <IfLastModified age="15d"/>
+                </Delete>
+            </DefaultRolloverStrategy>
+        </RollingFile>
     </Appenders>
 
     <Loggers>
-        <!-- ========================================================= -->
-        <!-- 1. 【降噪区】压制那些极其吵闹，且不出错就不需要关心的组件 -->
-        <!-- ========================================================= -->
-        
-        <!-- 压制 Nacos 心跳和长轮询 -->
-        <Logger name="com.alibaba.nacos" level="WARN" additivity="false">
-            <AppenderRef ref="Console"/>
-        </Logger>
-        
-        <!-- 压制 Kafka 底层网络消费者不断 Fetch 数据的日志 -->
-        <Logger name="org.apache.kafka.clients" level="WARN" additivity="false">
-            <AppenderRef ref="Console"/>
-        </Logger>
-        
-        <!-- 压制 Zookeeper 客户端的常规连接日志 (如果 Flink 启用了 HA) -->
-        <Logger name="org.apache.zookeeper" level="WARN" additivity="false">
-            <AppenderRef ref="Console"/>
-        </Logger>
-
-        <!-- ========================================================= -->
-        <!-- 2. 【核心关注区】确保关键引擎链路的日志清晰可见 -->
-        <!-- ========================================================= -->
-        
-        <!-- 保留 Flink CDC 的 INFO 日志：能清晰看到它正在读哪个表的哪个 binlog 位点 -->
-        <Logger name="com.ververica.cdc" level="INFO" additivity="false">
-            <AppenderRef ref="Console"/>
-        </Logger>
-
-        <!-- 保留 Flink Checkpoint 的 INFO 日志：能监控每次状态快照是否成功和耗时 -->
-        <Logger name="org.apache.flink.runtime.checkpoint" level="INFO" additivity="false">
-            <AppenderRef ref="Console"/>
-        </Logger>
-
-        <!-- 保留 Flink 任务调度与 TaskManager 生命周期的核心日志 -->
-        <Logger name="org.apache.flink.runtime.executiongraph" level="INFO" additivity="false">
-            <AppenderRef ref="Console"/>
-        </Logger>
-        <Logger name="org.apache.flink.runtime.taskmanager" level="INFO" additivity="false">
-            <AppenderRef ref="Console"/>
-        </Logger>
-
-        <!-- ========================================================= -->
-        <!-- 3. 【业务防漏区】全局兜底设置 -->
-        <!-- ========================================================= -->
-        
-        <!-- 你自己写的业务代码 (com.risk.sync) 会走这里的级别 -->
-        <!-- 如果你想单独调试你的清洗逻辑，可以把这里改成 DEBUG -->
-        <Logger name="com.risk.sync" level="INFO" additivity="false">
-            <AppenderRef ref="Console"/>
-        </Logger>
-
-        <!-- 全局 Root 兜底配置：其余未匹配到的类统一按 INFO 输出 -->
         <Root level="INFO">
-            <AppenderRef ref="Console"/>
+            <!-- 指向上面配置的 RollingFile -->
+            <AppenderRef ref="RollingFile"/>
         </Root>
+
+        <!-- 业务代码，生产环境建议改成 INFO，只记录关键节点，避免日志疯狂刷盘影响性能 -->
+        <Logger name="com.ymbank.fkxt.sdk.stream" level="INFO" additivity="false">
+            <AppenderRef ref="RollingFile"/>
+        </Logger>
+
+        <!-- 屏蔽底层组件的啰嗦日志 -->
+        <Logger name="org.apache.flink" level="INFO" additivity="false">
+            <AppenderRef ref="RollingFile"/>
+        </Logger>
+        <Logger name="org.apache.kafka" level="WARN" additivity="false">
+            <AppenderRef ref="RollingFile"/>
+        </Logger>
     </Loggers>
 </Configuration>
+
+
+
+<build>
+    <plugins>
+        <!-- Java 编译器插件 -->
+        <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-compiler-plugin</artifactId>
+            <version>3.8.1</version>
+            <configuration>
+                <source>1.8</source> <!-- 确保与你的 JDK 版本一致 -->
+                <target>1.8</target>
+            </configuration>
+        </plugin>
+
+        <!-- Shade 胖包插件 -->
+        <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-shade-plugin</artifactId>
+            <version>3.2.4</version>
+            <executions>
+                <execution>
+                    <phase>package</phase>
+                    <goals>
+                        <goal>shade</goal>
+                    </goals>
+                    <configuration>
+                        <artifactSet>
+                            <excludes>
+                                <!-- 排除不必要的元数据，减小包体积 -->
+                                <exclude>org.apache.flink:force-shading</exclude>
+                                <exclude>com.google.code.findbugs:jsr305</exclude>
+                                <exclude>org.slf4j:*</exclude>
+                                <exclude>log4j:*</exclude>
+                            </excludes>
+                        </artifactSet>
+                        <filters>
+                            <!-- 过滤掉签名文件，防止报 Invalid signature 错误 -->
+                            <filter>
+                                <artifact>*:*</artifact>
+                                <excludes>
+                                    <exclude>META-INF/*.SF</exclude>
+                                    <exclude>META-INF/*.DSA</exclude>
+                                    <exclude>META-INF/*.RSA</exclude>
+                                </excludes>
+                            </filter>
+                        </filters>
+                        <transformers>
+                            <!-- 合并 SPI 文件（非常关键，否则 MySQL 驱动可能会报错） -->
+                            <transformer implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer"/>
+                            <!-- 指定你的启动主类，这样提交任务时就不用手敲类名了 -->
+                            <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
+                                <mainClass>com.ymbank.fkxt.sdk.stream.MetricJob</mainClass> <!-- 【改这里！】换成你自己的 Main 类全路径 -->
+                            </transformer>
+                        </transformers>
+                    </configuration>
+                </execution>
+            </executions>
+        </plugin>
+    </plugins>
+</build>
