@@ -1,118 +1,129 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<Configuration status="WARN">
+import json
 
-    <!-- 1. 定义全局变量，方便统一修改 -->
-    <Properties>
-        <!-- 【极其重要】这里改成你服务器上实际的日志目录路径 -->
-        <Property name="LOG_HOME">/app/logs/flink/fkxt</Property>
-        <Property name="APP_NAME">risk-feature-job</Property>
-    </Properties>
+def to_camel_case(snake_str):
+    """将下划线命名 (snake_case) 转换为驼峰命名 (camelCase)"""
+    components = snake_str.split('_')
+    return components[0] + ''.join(x.title() for x in components[1:])
 
-    <Appenders>
-        <!-- 2. 配置滚动文件归档策略 -->
-        <RollingFile name="RollingFile" 
-                     fileName="${LOG_HOME}/${APP_NAME}.log"
-                     filePattern="${LOG_HOME}/$${date:yyyy-MM}/${APP_NAME}-%d{yyyy-MM-dd}-%i.log.gz">
+def capitalize_first(s):
+    """首字母大写，用于生成类名"""
+    return s[0].upper() + s[1:] if s else s
+
+class JavaEntityGenerator:
+    def __init__(self):
+        # 存储解析出的所有类及其字段：{ 类名: [(数据类型, 字段名)] }
+        self.classes = {}
+
+    def parse(self, class_name, data):
+        """递归解析 JSON 字典并提取字段类型"""
+        fields = []
+        for key, value in data.items():
+            java_type = self._get_java_type(key, value)
+            camel_key = to_camel_case(key)
+            fields.append((java_type, camel_key))
+        # 保存当前类的结构
+        self.classes[class_name] = fields
+
+    def _get_java_type(self, key, value):
+        """根据 Python 数据类型映射到对应的 Java 数据类型"""
+        if isinstance(value, str):
+            return "String"
+        elif isinstance(value, bool): # 注意：在 Python 中 bool 是 int 的子类，必须先判断 bool
+            return "Boolean"
+        elif isinstance(value, int):
+            return "Integer"
+        elif isinstance(value, float):
+            return "Double"
+        elif isinstance(value, dict):
+            # 处理嵌套对象：生成一个新的类
+            nested_class_name = capitalize_first(to_camel_case(key))
+            self.parse(nested_class_name, value) # 递归解析内部类
+            return nested_class_name
+        elif isinstance(value, list):
+            # 处理数组：尝试获取泛型类型
+            if len(value) > 0:
+                # 尝试去掉复数的 's' 作为泛型类名，或者加上 'Item'
+                singular_key = key[:-1] if key.endswith('s') else key + "Item"
+                elem_type = self._get_java_type(singular_key, value[0])
+                return f"List<{elem_type}>"
+            else:
+                return "List<Object>"
+        else:
+            return "Object"
+
+    def generate_code(self, use_lombok=True):
+        """将解析后的数据结构拼装成 Java 代码"""
+        code_lines = []
+        
+        if use_lombok:
+            code_lines.append("import lombok.Data;\n")
+        code_lines.append("import java.util.List;\n")
+        
+        # 遍历生成所有实体类（包含主类和嵌套类）
+        for cls_name, fields in self.classes.items():
+            if use_lombok:
+                code_lines.append("@Data")
+            code_lines.append(f"public class {cls_name} {{")
             
-            <PatternLayout pattern="%d{yyyy-MM-dd HH:mm:ss.SSS} [%t] %-5level %logger{36} - %msg%n"/>
+            # 生成属性字段
+            for java_type, field_name in fields:
+                code_lines.append(f"    private {java_type} {field_name};")
             
-            <Policies>
-                <!-- 策略一：按天归档（配合 filePattern 里的 %d{yyyy-MM-dd} 使用） -->
-                <TimeBasedTriggeringPolicy interval="1" modulate="true"/>
-                <!-- 策略二：如果一天内日志太多，单文件超过 100MB，自动触发切分 (-%i 会递增) -->
-                <SizeBasedTriggeringPolicy size="100 MB"/>
-            </Policies>
-            
-            <!-- 3. 配置日志保留与自动清理策略 -->
-            <DefaultRolloverStrategy max="50">
-                <!-- 自动删除 ${LOG_HOME} 目录下，15天前的 .gz 压缩包 -->
-                <Delete basePath="${LOG_HOME}" maxDepth="2">
-                    <IfFileName glob="*/${APP_NAME}-*.log.gz"/>
-                    <IfLastModified age="15d"/>
-                </Delete>
-            </DefaultRolloverStrategy>
-        </RollingFile>
-    </Appenders>
+            # 如果不使用 Lombok，则生成标准的 Getter 和 Setter
+            if not use_lombok:
+                code_lines.append("")
+                for java_type, field_name in fields:
+                    capitalized_field = capitalize_first(field_name)
+                    # Getter
+                    code_lines.append(f"    public {java_type} get{capitalized_field}() {{")
+                    code_lines.append(f"        return {field_name};")
+                    code_lines.append("    }")
+                    # Setter
+                    code_lines.append(f"    public void set{capitalized_field}({java_type} {field_name}) {{")
+                    code_lines.append(f"        this.{field_name} = {field_name};")
+                    code_lines.append("    }")
 
-    <Loggers>
-        <Root level="INFO">
-            <!-- 指向上面配置的 RollingFile -->
-            <AppenderRef ref="RollingFile"/>
-        </Root>
+            code_lines.append("}\n")
+        
+        return "\n".join(code_lines)
 
-        <!-- 业务代码，生产环境建议改成 INFO，只记录关键节点，避免日志疯狂刷盘影响性能 -->
-        <Logger name="com.ymbank.fkxt.sdk.stream" level="INFO" additivity="false">
-            <AppenderRef ref="RollingFile"/>
-        </Logger>
+def json_to_java(json_str, root_class_name="RootEntity", use_lombok=True):
+    """入口函数"""
+    try:
+        data = json.loads(json_str)
+        if not isinstance(data, dict):
+            return "错误: 最外层 JSON 必须是一个 Object ({})。"
+        
+        generator = JavaEntityGenerator()
+        generator.parse(root_class_name, data)
+        return generator.generate_code(use_lombok)
+    except json.JSONDecodeError as e:
+        return f"JSON 解析失败: {e}"
 
-        <!-- 屏蔽底层组件的啰嗦日志 -->
-        <Logger name="org.apache.flink" level="INFO" additivity="false">
-            <AppenderRef ref="RollingFile"/>
-        </Logger>
-        <Logger name="org.apache.kafka" level="WARN" additivity="false">
-            <AppenderRef ref="RollingFile"/>
-        </Logger>
-    </Loggers>
-</Configuration>
-
-
-
-<build>
-    <plugins>
-        <!-- Java 编译器插件 -->
-        <plugin>
-            <groupId>org.apache.maven.plugins</groupId>
-            <artifactId>maven-compiler-plugin</artifactId>
-            <version>3.8.1</version>
-            <configuration>
-                <source>1.8</source> <!-- 确保与你的 JDK 版本一致 -->
-                <target>1.8</target>
-            </configuration>
-        </plugin>
-
-        <!-- Shade 胖包插件 -->
-        <plugin>
-            <groupId>org.apache.maven.plugins</groupId>
-            <artifactId>maven-shade-plugin</artifactId>
-            <version>3.2.4</version>
-            <executions>
-                <execution>
-                    <phase>package</phase>
-                    <goals>
-                        <goal>shade</goal>
-                    </goals>
-                    <configuration>
-                        <artifactSet>
-                            <excludes>
-                                <!-- 排除不必要的元数据，减小包体积 -->
-                                <exclude>org.apache.flink:force-shading</exclude>
-                                <exclude>com.google.code.findbugs:jsr305</exclude>
-                                <exclude>org.slf4j:*</exclude>
-                                <exclude>log4j:*</exclude>
-                            </excludes>
-                        </artifactSet>
-                        <filters>
-                            <!-- 过滤掉签名文件，防止报 Invalid signature 错误 -->
-                            <filter>
-                                <artifact>*:*</artifact>
-                                <excludes>
-                                    <exclude>META-INF/*.SF</exclude>
-                                    <exclude>META-INF/*.DSA</exclude>
-                                    <exclude>META-INF/*.RSA</exclude>
-                                </excludes>
-                            </filter>
-                        </filters>
-                        <transformers>
-                            <!-- 合并 SPI 文件（非常关键，否则 MySQL 驱动可能会报错） -->
-                            <transformer implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer"/>
-                            <!-- 指定你的启动主类，这样提交任务时就不用手敲类名了 -->
-                            <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
-                                <mainClass>com.ymbank.fkxt.sdk.stream.MetricJob</mainClass> <!-- 【改这里！】换成你自己的 Main 类全路径 -->
-                            </transformer>
-                        </transformers>
-                    </configuration>
-                </execution>
-            </executions>
-        </plugin>
-    </plugins>
-</build>
+# ================= 测试与运行 =================
+if __name__ == '__main__':
+    # 你可以在这里替换成你的 JSON 字符串
+    sample_json = """
+    {
+        "user_id": 1001,
+        "user_name": "张三",
+        "is_active": true,
+        "score": 98.5,
+        "address": {
+            "province": "Guangdong",
+            "city": "Shenzhen",
+            "zip_code": 518000
+        },
+        "orders": [
+            {
+                "order_id": "ORD-001",
+                "amount": 250.0
+            }
+        ],
+        "tags": ["VIP", "New"]
+    }
+    """
+    
+    # 运行并打印生成的 Java 代码
+    java_code = json_to_java(sample_json, root_class_name="UserInfo", use_lombok=True)
+    print(java_code)
