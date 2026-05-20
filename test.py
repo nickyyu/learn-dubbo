@@ -1,129 +1,93 @@
-import json
+import pandas as pd
+import re
+import os
 
-def to_camel_case(snake_str):
-    """将下划线命名 (snake_case) 转换为驼峰命名 (camelCase)"""
+def snake_to_camel(snake_str):
+    """将下划线命名转换为驼峰命名 (data_date -> dataDate)"""
     components = snake_str.split('_')
-    return components[0] + ''.join(x.title() for x in components[1:])
+    # 处理空字符串或不包含下划线的情况
+    if not components or not components[0]:
+        return snake_str
+    return components[0].lower() + ''.join(x.title() for x in components[1:])
 
-def capitalize_first(s):
-    """首字母大写，用于生成类名"""
-    return s[0].upper() + s[1:] if s else s
-
-class JavaEntityGenerator:
-    def __init__(self):
-        # 存储解析出的所有类及其字段：{ 类名: [(数据类型, 字段名)] }
-        self.classes = {}
-
-    def parse(self, class_name, data):
-        """递归解析 JSON 字典并提取字段类型"""
-        fields = []
-        for key, value in data.items():
-            java_type = self._get_java_type(key, value)
-            camel_key = to_camel_case(key)
-            fields.append((java_type, camel_key))
-        # 保存当前类的结构
-        self.classes[class_name] = fields
-
-    def _get_java_type(self, key, value):
-        """根据 Python 数据类型映射到对应的 Java 数据类型"""
-        if isinstance(value, str):
-            return "String"
-        elif isinstance(value, bool): # 注意：在 Python 中 bool 是 int 的子类，必须先判断 bool
-            return "Boolean"
-        elif isinstance(value, int):
-            return "Integer"
-        elif isinstance(value, float):
-            return "Double"
-        elif isinstance(value, dict):
-            # 处理嵌套对象：生成一个新的类
-            nested_class_name = capitalize_first(to_camel_case(key))
-            self.parse(nested_class_name, value) # 递归解析内部类
-            return nested_class_name
-        elif isinstance(value, list):
-            # 处理数组：尝试获取泛型类型
-            if len(value) > 0:
-                # 尝试去掉复数的 's' 作为泛型类名，或者加上 'Item'
-                singular_key = key[:-1] if key.endswith('s') else key + "Item"
-                elem_type = self._get_java_type(singular_key, value[0])
-                return f"List<{elem_type}>"
-            else:
-                return "List<Object>"
-        else:
-            return "Object"
-
-    def generate_code(self, use_lombok=True):
-        """将解析后的数据结构拼装成 Java 代码"""
-        code_lines = []
-        
-        if use_lombok:
-            code_lines.append("import lombok.Data;\n")
-        code_lines.append("import java.util.List;\n")
-        
-        # 遍历生成所有实体类（包含主类和嵌套类）
-        for cls_name, fields in self.classes.items():
-            if use_lombok:
-                code_lines.append("@Data")
-            code_lines.append(f"public class {cls_name} {{")
-            
-            # 生成属性字段
-            for java_type, field_name in fields:
-                code_lines.append(f"    private {java_type} {field_name};")
-            
-            # 如果不使用 Lombok，则生成标准的 Getter 和 Setter
-            if not use_lombok:
-                code_lines.append("")
-                for java_type, field_name in fields:
-                    capitalized_field = capitalize_first(field_name)
-                    # Getter
-                    code_lines.append(f"    public {java_type} get{capitalized_field}() {{")
-                    code_lines.append(f"        return {field_name};")
-                    code_lines.append("    }")
-                    # Setter
-                    code_lines.append(f"    public void set{capitalized_field}({java_type} {field_name}) {{")
-                    code_lines.append(f"        this.{field_name} = {field_name};")
-                    code_lines.append("    }")
-
-            code_lines.append("}\n")
-        
-        return "\n".join(code_lines)
-
-def json_to_java(json_str, root_class_name="RootEntity", use_lombok=True):
-    """入口函数"""
-    try:
-        data = json.loads(json_str)
-        if not isinstance(data, dict):
-            return "错误: 最外层 JSON 必须是一个 Object ({})。"
-        
-        generator = JavaEntityGenerator()
-        generator.parse(root_class_name, data)
-        return generator.generate_code(use_lombok)
-    except json.JSONDecodeError as e:
-        return f"JSON 解析失败: {e}"
-
-# ================= 测试与运行 =================
-if __name__ == '__main__':
-    # 你可以在这里替换成你的 JSON 字符串
-    sample_json = """
-    {
-        "user_id": 1001,
-        "user_name": "张三",
-        "is_active": true,
-        "score": 98.5,
-        "address": {
-            "province": "Guangdong",
-            "city": "Shenzhen",
-            "zip_code": 518000
-        },
-        "orders": [
-            {
-                "order_id": "ORD-001",
-                "amount": 250.0
-            }
-        ],
-        "tags": ["VIP", "New"]
-    }
-    """
+def generate_java_pojo(excel_path, sheet_name, class_name):
+    print(f"🚀 开始解析 Excel: {excel_path} | Sheet: {sheet_name}")
     
-    # 运行并打印生成的 Java 代码
-    java_code = json_to_java(sample_json, root_class_name="UserInfo", use_lombok=True)
-    print(java_code)
+    # 核心：定义 SQL/Excel 数据类型到 Java 类型的映射字典
+    type_mapping = {
+        'VARCHAR': 'String',
+        'CHAR': 'String',
+        'TEXT': 'String',
+        'INT': 'Integer',
+        'BIGINT': 'Long',
+        'DECIMAL': 'BigDecimal',
+        'NUMERIC': 'BigDecimal',
+        'DOUBLE': 'Double',
+        'FLOAT': 'Float',
+        'DATE': 'LocalDate',
+        'DATETIME': 'LocalDateTime',
+        'TIMESTAMP': 'Long' # 或者 LocalDateTime，视您的 Flink 处理习惯而定
+    }
+
+    try:
+        # 读取 Excel。
+        # 观察您的截图，真正的表头在第 3 行（索引为 2），所以我们跳过前两行。
+        df = pd.read_excel(excel_path, sheet_name=sheet_name, header=2)
+        
+        # 清理数据：过滤掉“字段”列为空的行（忽略空行）
+        df = df.dropna(subset=['字段'])
+        
+        # 开始拼接 Java 代码
+        java_code = "import lombok.Data;\n"
+        java_code += "import java.math.BigDecimal;\n"
+        java_code += "import java.time.LocalDateTime;\n"
+        java_code += "import java.time.LocalDate;\n\n"
+        java_code += "/**\n * 自动生成的实体类\n * 来源 Sheet: " + sheet_name + "\n */\n"
+        java_code += "@Data\n"
+        java_code += f"public class {class_name} {{\n\n"
+
+        # 遍历数据行
+        for index, row in df.iterrows():
+            # 提取并清理三个核心字段
+            field_en = str(row['字段']).strip()
+            field_cn = str(row['名称']).strip()
+            data_type = str(row['数据类型']).strip().upper()
+            
+            if field_en == 'nan' or not field_en:
+                continue
+
+            # 处理数据类型中的长度，例如将 "VARCHAR(10)" 过滤为 "VARCHAR"
+            clean_data_type = re.sub(r'\(.*?\)', '', data_type).strip()
+            
+            # 获取对应的 Java 类型，如果字典里没有，默认兜底使用 String
+            java_type = type_mapping.get(clean_data_type, 'String')
+            
+            # 转换为驼峰命名
+            camel_case_field = snake_to_camel(field_en)
+
+            # 拼装带有注释的字段声明
+            java_code += f"    /**\n     * {field_cn}\n     */\n"
+            java_code += f"    private {java_type} {camel_case_field};\n\n"
+
+        java_code += "}\n"
+        
+        # 将生成的代码写入 .java 文件
+        output_file = f"{class_name}.java"
+        with open(output_file, "w", encoding="utf-8") as f:
+            f.write(java_code)
+            
+        print(f"✅ 成功生成 Java 文件: {os.path.abspath(output_file)}")
+        print("-" * 40)
+        print(java_code)
+        
+    except Exception as e:
+        print(f"❌ 解析失败: {e}")
+
+if __name__ == "__main__":
+    # 使用示例：请将这里的路径替换为您真实的 Excel 路径
+    FILE_PATH = "data_dict.xlsx" 
+    SHEET_NAME = "Sheet1"        # 替换为真实的 Sheet 名称
+    TARGET_CLASS_NAME = "GpsLabelVariable" # 您期望生成的 Java 类名
+
+    # 如果要批量处理多个 Sheet，可以在这里加个 for 循环
+    generate_java_pojo(FILE_PATH, SHEET_NAME, TARGET_CLASS_NAME)
