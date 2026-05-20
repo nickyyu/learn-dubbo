@@ -1,97 +1,120 @@
-import pandas as pd
-import math
-import os
+CREATE TABLE `bd_gps_lbl_pl` (
+  `data_date` varchar(10) NOT NULL COMMENT '数据日期',
+  `geohash` varchar(10) NOT NULL COMMENT 'geohash',
+  `reg_7d_dam_cust_num` int(11) DEFAULT '0' COMMENT '注册近7天十米GPS关联客户数(gps4位)',
+  `reg_30d_dam_cust_num` int(11) DEFAULT '0' COMMENT '注册近30天十米GPS关联客户数(gps4位)',
+  `crdt_7d_dam_cust_num` int(11) DEFAULT '0' COMMENT '授信近7天十米GPS关联客户数(gps4位)',
+  `crdt_30d_dam_cust_num` int(11) DEFAULT '0' COMMENT '授信近30天十米GPS关联客户数(gps4位)',
+  `lttr_7d_dam_cust_num` int(11) DEFAULT '0' COMMENT '用信近7天十米GPS关联客户数(gps4位)',
+  `lttr_30d_dam_cust_num` int(11) DEFAULT '0' COMMENT '用信近30天十米GPS关联客户数(gps4位)',
+  `reg_7d_hm_cust_num` int(11) DEFAULT '0' COMMENT '注册近7天百米GPS关联客户数(gps3位)',
+  `reg_30d_hm_cust_num` int(11) DEFAULT '0' COMMENT '注册近30天百米GPS关联客户数(gps3位)',
+  PRIMARY KEY (`data_date`,`geohash`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='GPS变量标签';
 
-def generate_mysql_ddl(excel_path, sheet_name, table_name, table_comment, primary_keys=None):
-    """
-    解析 Excel 数据字典并生成 MySQL 物理建表语句
-    """
-    print(f"🚀 开始解析 Excel: {excel_path} | Sheet: {sheet_name}")
-    
-    try:
-        # 读取 Excel，截图显示表头在第 3 行（索引为 2）
-        df = pd.read_excel(excel_path, sheet_name=sheet_name, header=2)
-        
-        # 过滤掉“字段”列为空的行（忽略空行）
-        df = df.dropna(subset=['字段'])
-        
-        # 拼接 SQL 头
-        sql_code = f"CREATE TABLE `{table_name}` (\n"
-        
-        columns_sql = []
-        # 遍历数据行
-        for index, row in df.iterrows():
-            # 提取信息
-            field_en = str(row['字段']).strip()
-            field_cn = str(row['名称']).strip()
-            
-            # 如果遇到空行则跳过
-            if field_en == 'nan' or not field_en:
-                continue
-                
-            # 处理数据类型和长度
-            data_type = str(row.get('数据类型', 'VARCHAR')).strip().upper()
-            length = row.get('长度', '')
-            
-            # 智能组装数据类型（比如 VARCHAR + 10 -> VARCHAR(10)）
-            # 如果类型里本身不带括号，且长度列有值，则拼接长度
-            if pd.notna(length) and str(length).strip() != '' and '(' not in data_type:
-                try:
-                    # 处理 Excel 读取数字可能变成 10.0 的情况
-                    len_int = int(float(length))
-                    final_type = f"{data_type}({len_int})"
-                except ValueError:
-                    final_type = data_type
-            else:
-                final_type = data_type
-            
-            # 对于数值类型如果没有指定长度，给定默认的类型展示
-            if final_type == 'INT':
-                final_type = 'INT(11)' 
-                
-            # 处理注释中的单引号（防止 SQL 语法报错）
-            safe_comment = field_cn.replace("'", "\\'")
-            
-            # 拼接单行字段定义
-            column_def = f"  `{field_en}` {final_type} COMMENT '{safe_comment}'"
-            columns_sql.append(column_def)
+CREATE TABLE `bd_ip_lbl_pl` (
+  `data_date` varchar(10) NOT NULL COMMENT '数据日期',
+  `usr_ipaddr` varchar(50) NOT NULL COMMENT '用户ip地址',
+  `reg_3d_cust_num` int(11) DEFAULT '0' COMMENT '注册近3天IP关联客户数',
+  `reg_7d_cust_num` int(11) DEFAULT '0' COMMENT '注册近7天IP关联客户数',
+  `reg_30d_cust_num` int(11) DEFAULT '0' COMMENT '注册近30天IP关联客户数',
+  `lttr_3d_cust_num` int(11) DEFAULT '0' COMMENT '用信近3天IP关联客户数',
+  `lttr_7d_cust_num` int(11) DEFAULT '0' COMMENT '用信近7天IP关联客户数',
+  `lttr_30d_cust_num` int(11) DEFAULT '0' COMMENT '用信近30天IP关联客户数',
+  PRIMARY KEY (`data_date`, `usr_ipaddr`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='IP变量标签';
 
-        # 处理主键约束
-        if primary_keys and len(primary_keys) > 0:
-            pk_str = ", ".join([f"`{pk}`" for pk in primary_keys])
-            columns_sql.append(f"  PRIMARY KEY ({pk_str})")
+CREATE TABLE `bd_openid_lbl_pl` (
+  `data_date` varchar(10) NOT NULL COMMENT '数据日期',
+  `open_id` varchar(50) NOT NULL COMMENT 'OPEN_ID',
+  `reg_3d_tlphn_num` int(11) DEFAULT '0' COMMENT '注册近3天关联手机号码数',
+  `reg_7d_tlphn_num` int(11) DEFAULT '0' COMMENT '注册近7天关联手机号码数',
+  `reg_30d_tlphn_num` int(11) DEFAULT '0' COMMENT '注册近30天关联手机号码数',
+  PRIMARY KEY (`data_date`, `open_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='OPENID变量标签';
 
-        # 将字段列表通过 ",\n" 拼接，并加入到最终的 SQL 中
-        sql_code += ",\n".join(columns_sql)
-        sql_code += "\n"
-        
-        # 拼接 SQL 尾部属性表征
-        sql_code += f") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='{table_comment}';\n"
-        
-        # 将生成的建表语句写入 .sql 文件
-        output_file = f"{table_name}.sql"
-        with open(output_file, "w", encoding="utf-8") as f:
-            f.write(sql_code)
-            
-        print(f"✅ 成功生成建表 SQL 文件: {os.path.abspath(output_file)}")
-        print("-" * 50)
-        print(sql_code)
-        
-    except Exception as e:
-        print(f"❌ 解析失败: {e}")
 
-if __name__ == "__main__":
-    # ======== 配置区 ========
-    FILE_PATH = "data_dict.xlsx"   # 替换为您 Excel 文件的真实路径
-    SHEET_NAME = "Sheet1"          # 替换为真实的 Sheet 名称
-    
-    # 目标表的元数据
-    TABLE_NAME = "bd_gps_lbl_pl"
-    TABLE_COMMENT = "GPS变量标签"
-    
-    # 指定主键（如果截图中的前两个带有复选框代表是主键，则填入这里）
-    PRIMARY_KEYS = ["data_date", "geohash"] 
-    # =======================
+CREATE TABLE `bd_wifi_lbl_pl` (
+  `data_date` varchar(10) NOT NULL COMMENT '数据日期',
+  `wifi_mac_addr` varchar(50) NOT NULL COMMENT 'wifi mac地址（路由器）',
+  `crdt_3d_cust_num` int(11) DEFAULT '0' COMMENT '授信近3天WIFI关联客户数',
+  `crdt_7d_cust_num` int(11) DEFAULT '0' COMMENT '授信近7天WIFI关联客户数',
+  `crdt_30d_cust_num` int(11) DEFAULT '0' COMMENT '授信近30天WIFI关联客户数',
+  `lttr_3d_cust_num` int(11) DEFAULT '0' COMMENT '用信近3天WIFI关联客户数',
+  `lttr_7d_cust_num` int(11) DEFAULT '0' COMMENT '用信近7天WIFI关联客户数',
+  `lttr_30d_cust_num` int(11) DEFAULT '0' COMMENT '用信近30天WIFI关联客户数',
+  PRIMARY KEY (`data_date`, `wifi_mac_addr`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='WIFI变量标签';
 
-    # 执行生成
-    generate_mysql_ddl(FILE_PATH, SHEET_NAME, TABLE_NAME, TABLE_COMMENT, PRIMARY_KEYS)
+CREATE TABLE `bd_rsrn_addr_lbl_pl` (
+  `data_date` varchar(10) NOT NULL COMMENT '数据日期',
+  `rsrn_addr` varchar(50) NOT NULL COMMENT '户籍地址',
+  `lttr_3d_cust_num` int(11) DEFAULT '0' COMMENT '用信近3天户籍地址关联客户数',
+  `lttr_7d_cust_num` int(11) DEFAULT '0' COMMENT '用信近7天户籍地址关联客户数',
+  `lttr_30d_cust_num` int(11) DEFAULT '0' COMMENT '用信近30天户籍地址关联客户数',
+  PRIMARY KEY (`data_date`, `rsrn_addr`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='户籍地址变量标签';
+
+CREATE TABLE `bd_usr_lbl_pl` (
+  `data_date` varchar(10) NOT NULL COMMENT '数据日期',
+  `usr_no` varchar(200) NOT NULL COMMENT '用户编号',
+  `nr_1m_mdfy_phn_num` int(11) DEFAULT '0' COMMENT '近1月修改注册手机号码次数',
+  `nr_3m_mdfy_phn_num` int(11) DEFAULT '0' COMMENT '近3月修改注册手机号码次数',
+  `nr_6m_mdfy_phn_num` int(11) DEFAULT '0' COMMENT '近6月修改注册手机号码次数',
+  `nr_12m_mdfy_phn_num` int(11) DEFAULT '0' COMMENT '近12月修改注册手机号码次数',
+  `nr_7d_mdfy_psr_num` int(11) DEFAULT '0' COMMENT '近7天账户修改交易密码数',
+  `nr_30d_mdfy_psr_num` int(11) DEFAULT '0' COMMENT '近30天账户修改交易密码数',
+  `nr_7d_rlt_fgpn_num` int(11) DEFAULT '0' COMMENT '近7天关联不同简易设备指纹数',
+  `nr_30d_rlt_fgpn_num` int(11) DEFAULT '0' COMMENT '近30天关联不同简易设备指纹数',
+  `crdt_3d_scr_num` int(11) DEFAULT '0' COMMENT '授信近3天截屏次数',
+  `crdt_3d_exit_prgrm_num` int(11) DEFAULT '0' COMMENT '授信近3天跳出小程序次数',
+  `lttr_3d_scr_num` int(11) DEFAULT '0' COMMENT '用信近3天截屏次数',
+  `lttr_3d_exit_prgrm_num` int(11) DEFAULT '0' COMMENT '用信近3天跳出小程序次数',
+  PRIMARY KEY (`data_date`, `usr_no`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='用户变量标签';CREATE TABLE `bd_tlphn_lbl_pl` (
+  `data_date` varchar(10) NOT NULL COMMENT '数据日期',
+  `cr_cust_no` varchar(50) NOT NULL COMMENT '核心客户号',
+  
+  -- [上半部分字段 3-28]
+  `mbl_phn` varchar(30) DEFAULT NULL COMMENT '手机号码',
+  `crrnt_ovd_stts` varchar(5) DEFAULT NULL COMMENT '当前逾期状态',
+  `crrnt_ovd_num` int(11) DEFAULT '0' COMMENT '当前逾期笔数',
+  `crrnt_ovd_amt` decimal(18,2) DEFAULT '0.00' COMMENT '当前逾期金额',
+  `crrnt_noclr_ets_num` int(11) DEFAULT '0' COMMENT '当前未结清延期笔数',
+  `crrnt_noclr_ets_amt` decimal(18,2) DEFAULT '0.00' COMMENT '当前未结清延期金额',
+  `crrnt_lumpsum_cpsn_num` int(11) DEFAULT '0' COMMENT '当前整笔代偿笔数',
+  `crrnt_lumpsum_cpsn_amt` decimal(18,2) DEFAULT '0.00' COMMENT '当前整笔代偿金额',
+  `his_max_ovd_dys` int(11) DEFAULT '0' COMMENT '历史最大逾期天数',
+  `ant_mnylaun_bclt_flg` varchar(5) DEFAULT NULL COMMENT '反洗钱黑名单标志',
+  `ant_mnylaun_rsk_grd` varchar(10) DEFAULT NULL COMMENT '反洗钱风险等级',
+  `bnk_crd_frz_flg` varchar(5) DEFAULT NULL COMMENT '银行卡冻结标志',
+  `apply_id_no_num` int(11) DEFAULT '0' COMMENT '申请身份证号数',
+  `nr_7day_apply_id_no_num` int(11) DEFAULT '0' COMMENT '近7天申请身份证号数',
+  `rcnt_apply_sccss_dt` varchar(10) DEFAULT NULL COMMENT '最近申请成功日期',
+  `rlt_crrnt_ovd_stts` varchar(5) DEFAULT NULL COMMENT '关联当前逾期状态',
+  `rlt_crrnt_ovd_num` int(11) DEFAULT '0' COMMENT '关联当前逾期笔数',
+  `rlt_crrnt_ovd_amt` decimal(18,2) DEFAULT '0.00' COMMENT '关联当前逾期金额',
+  `rlt_crrnt_noclr_ets_num` int(11) DEFAULT '0' COMMENT '关联当前未结清延期笔数',
+  `rlt_crrnt_noclr_ets_amt` decimal(18,2) DEFAULT '0.00' COMMENT '关联当前未结清延期金额',
+  `rlt_lumpsum_cpsn_num` int(11) DEFAULT '0' COMMENT '关联当前整笔代偿笔数',
+  `rlt_lumpsum_cpsn_amt` decimal(18,2) DEFAULT '0.00' COMMENT '关联当前整笔代偿金额',
+  `rlt_his_max_ovd_dys` int(11) DEFAULT '0' COMMENT '关联历史最大逾期天数',
+  `rlt_rcnt_apply_sccss_dt` varchar(10) DEFAULT NULL COMMENT '关联最近申请成功日期',
+  `rlt_3mm_tlphn_num` int(11) DEFAULT '0' COMMENT '关联近3月手机号数',
+  `nr_7day_cust_num` int(11) DEFAULT '0' COMMENT '近7天客户数',
+
+  -- [新补充字段 29-39]
+  `nr_1mm_cust_num` int(11) DEFAULT '0' COMMENT '近1月客户数',
+  `nr_3mm_cust_num` int(11) DEFAULT '0' COMMENT '近3月客户数',
+  `nr_6mm_cust_num` int(11) DEFAULT '0' COMMENT '近6月客户数',
+  `nr_12mm_cust_num` int(11) DEFAULT '0' COMMENT '近12月客户数',
+  `nr_12mm_wnd_bclt_cust_num` int(11) DEFAULT '0' COMMENT '近12月风控黑名单客户数',
+  `rlt_nr_7day_cust_num` int(11) DEFAULT '0' COMMENT '关联近7天客户数',
+  `rlt_nr_1mm_cust_num` int(11) DEFAULT '0' COMMENT '关联近1月客户数',
+  `rlt_nr_3mm_cust_num` int(11) DEFAULT '0' COMMENT '关联近3月客户数',
+  `rlt_nr_6mm_cust_num` int(11) DEFAULT '0' COMMENT '关联近6月客户数',
+  `rlt_nr_12mm_cust_num` int(11) DEFAULT '0' COMMENT '关联近12月客户数',
+  `rlt_nr_12mm_dfn_nm_cust_num` int(11) DEFAULT '0' COMMENT '关联近12月不同名客户数',
+  
+  PRIMARY KEY (`data_date`, `cr_cust_no`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='外脑策略手机号变量标签';
