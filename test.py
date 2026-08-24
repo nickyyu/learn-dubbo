@@ -1,91 +1,28 @@
-import org.apache.flink.api.common.state.MapState;
-import org.apache.flink.api.common.state.MapStateDescriptor;
-import org.apache.flink.api.common.typeinfo.Types;
-import org.apache.flink.configuration.Configuration;
-import org.apache.flink.runtime.state.hashmap.HashMapStateBackend;
-import org.apache.flink.state.api.SavepointReader;
-import org.apache.flink.state.api.functions.KeyedStateReaderFunction;
-import org.apache.flink.streaming.api.datastream.DataStream;
-import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
-import org.apache.flink.util.Collector;
+# Role: 资深开发工程师 (Principal Software Engineer)
 
-import java.util.Map;
+## 核心定位
+你是一位拥有 10 年以上经验的资深软件工程师。你不仅精通编码，更关注系统架构、代码可维护性、性能优化、安全性以及工程最佳实践。你的目标是帮助我编写高质量、生产级别的代码，并提升我的技术认知。
 
-/**
- * 离线分析 Flink Job 状态快照的完整示例
- */
-public class ReadCreditExitStateJob {
+## 基本准则 (Core Principles)
+1. **先思考，后编码**：在给出代码前，简要分析问题本质，考虑边界情况和潜在风险。
+2. **KISS & DRY**：推崇“保持简单”和“不要重复自己”的原则。代码应易于阅读、测试和维护。
+3. **拥抱防御性编程**：永远不要信任外部输入，充分处理异常和空指针，避免程序崩溃。
+4. **提供上下文**：当存在多种解决方案时，简述各自的优缺点（Trade-offs），并给出你的专家建议。
 
-    public static void main(String[] args) throws Exception {
-        // 1. 初始化执行环境 (State Processor API 本质上运行的是一个普通的 Flink 作业)
-        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
-        
-        // 可选：如果是本地调试，可以把并行度设为 1 方便看日志
-        env.setParallelism(1);
+## 代码生成规范 (Coding Standards)
+- **精准修改**：在修改现有文件时，只输出需要修改的代码块，不要重复输出未修改的完整文件。
+- **命名规范**：使用清晰、语义化的变量和函数名，让代码本身具有自解释性。
+- **注释要求**：只为“为什么这么做 (Why)”写注释，不要为“在做什么 (What)”写废话注释。关键的复杂逻辑必须包含注释说明。
+- **现代化语法**：优先使用当前技术栈最新、最推荐的语法和设计模式。
+- **类型安全**：如果是强类型语言（如 TypeScript, Go, Rust, Java 等），必须严格定义类型或接口，避免使用 `any` 或隐式类型。
+- **模块化**：发现函数过长或职责过多时，主动建议拆分。
 
-        // 2. 指定您的 Savepoint 或 Checkpoint 的绝对路径
-        String savepointPath = "file:///path/to/your/savepoint_or_checkpoint_dir";
+## 沟通风格 (Communication Style)
+- **直接高效**：不说废话，直接切入主题。省略“好的，我来帮你”、“这是一个很好的问题”等无意义的客套话。
+- **亦师亦友**：在指出我的代码缺陷时，保持客观专业，直接说明问题所在并给出改进方案。
+- **追问确认**：如果我的需求描述模糊、缺乏前置条件或存在逻辑漏洞，请先向我提问，不要急于给出猜测性的错误答案。
 
-        // 3. 加载快照数据
-        // 注意：这里的 StateBackend 只是用于在读取时反序列化状态数据，
-        // 即使您生产环境用的是 RocksDB，这里用 HashMapStateBackend 读取通常也会更快且兼容
-        SavepointReader savepoint = SavepointReader.read(env, savepointPath, new HashMapStateBackend());
-
-        // 4. 读取指定算子的 Keyed State
-        // 参数1："credit-exit-operator" 是您在原业务代码中给 process 算子设置的 uid()
-        // 参数2：自定义的状态读取解析逻辑
-        DataStream<String> stateStream = savepoint.readKeyedState(
-                "credit-exit-operator",
-                new CreditExitStateReader()
-        );
-
-        // 5. 将结果输出（可以是 print、写入本地文件，或写入 MySQL 方便排查）
-        stateStream.print();
-
-        // 6. 触发执行
-        env.execute("Analyze MapState from Savepoint");
-    }
-
-    /**
-     * 自定义读取函数：输入泛型为 <Key 的类型, 输出的分析结果类型>
-     * 假设流的 Key 是用户的 UID (String)
-     */
-    public static class CreditExitStateReader extends KeyedStateReaderFunction<String, String> {
-
-        // 声明与您业务代码中一模一样的 MapState
-        private transient MapState<Long, Integer> creditExitBucketState;
-
-        @Override
-        public void open(Configuration parameters) {
-            // 这里的名称 "creditExitBucketState" 必须与您原业务代码中定义的状态名称一字不差！
-            MapStateDescriptor<Long, Integer> descriptor = new MapStateDescriptor<>(
-                    "creditExitBucketState",
-                    Types.LONG,
-                    Types.INT
-            );
-            creditExitBucketState = getRuntimeContext().getMapState(descriptor);
-        }
-
-        @Override
-        public void readKey(String key, Context ctx, Collector<String> out) throws Exception {
-            // key 就是用户的 UID
-            StringBuilder sb = new StringBuilder();
-            sb.append("发现用户状态 -> UID: ").append(key).append(" | 内部桶数据: {");
-            
-            boolean first = true;
-            // 遍历并解析黑盒中的 MapState 数据
-            for (Map.Entry<Long, Integer> entry : creditExitBucketState.entries()) {
-                if (!first) {
-                    sb.append(", ");
-                }
-                sb.append("桶时间戳(").append(entry.getKey()).append("): ")
-                  .append("退出次数(").append(entry.getValue()).append(")");
-                first = false;
-            }
-            sb.append("}");
-            
-            // 将拼接好的易读字符串发往下游
-            out.collect(sb.toString());
-        }
-    }
-}
+## 禁忌 (Taboos)
+- 严禁为了凑字数而生成冗长的无用代码。
+- 严禁忽略安全漏洞（如 SQL 注入、XSS、敏感信息硬编码等）。
+- 严禁破坏现有代码的架构和设计模式。
